@@ -1,0 +1,143 @@
+DECLARE v_ChangeDate TIMESTAMP DEFAULT '2022-12-01 00:00:00';
+
+WITH CTE_UC AS (
+  SELECT 
+  Scoreid,
+  CAST(termdata AS INT64) AS termdata,
+  termid,
+  creationdate
+  FROM (
+    SELECT
+    Creationdate,
+    Scoreid,
+    termid,
+    termdata,
+    ROW_NUMBER() OVER(PARTITION BY Scoreid, termid ORDER BY CreationDate DESC) AS RN 
+    FROM `lendifydata1000.authorized_views.UCDetails`
+  WHERE termid IN ('W45A25','W45A24','W45A23','W4D003','W45A27','W45A28','W45025','W45024','W45023','W45027','W45028'))
+    WHERE RN = 1
+)
+
+SELECT
+    DL.Loanid,
+
+    CASE
+    WHEN DL.CreationDate < v_ChangeDate
+      THEN 'Pre implementation'
+    ELSE 'Post implementation'
+    END AS EvaluationPhase,
+
+    CASE 
+     WHEN 
+     (COALESCE(UC2.Termdata, UC8.termdata,0) + 
+      COALESCE (UC3.Termdata, UC7.termdata ,0 ) + 
+      COALESCE(UC4.Termdata, UC11.termdata, 0)) /
+      IF (DL.monthlyincome*12 IS NULL,1,IF(DL.monthlyincome*12 = 0,1,DL.monthlyincome*12))*100 < 180 
+      
+      AND
+      
+      (( COALESCE(UC.Termdata, UC9.Termdata,0)  +
+       COALESCE (UC6.Termdata, UC10.Termdata,0)) / 
+      IF (UC5.Termdata IS NULL,1, UC5.termdata)) +
+      (COALESCE(UC2.Termdata, UC8.termdata,0) + 
+      COALESCE (UC3.Termdata, UC7.termdata ,0 ) + 
+      COALESCE(UC4.Termdata, UC11.termdata, 0) /
+      IF (DL.monthlyincome*12 IS NULL,1,IF(DL.monthlyincome*12 = 0,1,DL.monthlyincome*12)))*100  < 500 THEN 'StillGreen'
+    ELSE 'Blackflag'
+    END AS StillGreen,
+
+    CASE 
+    WHEN 
+      (COALESCE(UC2.Termdata, UC8.termdata,0) + 
+      COALESCE (UC3.Termdata, UC7.termdata ,0 ) + 
+      COALESCE(UC4.Termdata, UC11.termdata, 0)) /
+      IF (DL.monthlyincome*12 IS NULL,1,IF(DL.monthlyincome*12 = 0,1,DL.monthlyincome*12))*100 < 180 
+      
+      AND
+    
+     ( COALESCE(UC.Termdata, UC9.Termdata,0)  +
+       COALESCE (UC6.Termdata, UC10.Termdata,0)) / 
+      IF (UC5.Termdata IS NULL,1, UC5.termdata) +
+      (COALESCE(UC2.Termdata, UC8.termdata,0) + 
+      COALESCE (UC3.Termdata, UC7.termdata ,0 ) + 
+      COALESCE(UC4.Termdata, UC11.termdata, 0)) /
+      IF (DL.monthlyincome*12 IS NULL,1,IF(DL.monthlyincome*12 = 0,1,DL.monthlyincome*12))*100 > 500 THEN 'NewBlack'
+    ELSE 'Stable'
+    END AS GreenToBlack,
+
+    CASE 
+    WHEN 
+      (COALESCE(UC2.Termdata, UC8.termdata,0) + 
+      COALESCE (UC3.Termdata, UC7.termdata ,0 ) + 
+      COALESCE(UC4.Termdata, UC11.termdata, 0)) /
+      IF (DL.monthlyincome*12 IS NULL,1,IF(DL.monthlyincome*12 = 0,1,DL.monthlyincome*12))*100   > 180 
+    
+     AND
+    
+       (( COALESCE(UC.Termdata, UC9.Termdata,0)  +
+       COALESCE (UC6.Termdata, UC10.Termdata,0)) / 
+      IF (UC5.Termdata IS NULL,1, UC5.termdata)) +
+      (COALESCE(UC2.Termdata, UC8.termdata,0) + 
+      COALESCE (UC3.Termdata, UC7.termdata ,0 ) + 
+      COALESCE(UC4.Termdata, UC11.termdata, 0) /
+      IF (DL.monthlyincome*12 IS NULL,1,IF(DL.monthlyincome*12 = 0,1,DL.monthlyincome*12)))*100   > 500 THEN 'StillBlack'
+    ELSE 'Stable'
+    END AS ConsistentBlack
+      
+  FROM (
+    SELECT
+    COALESCE(DL.loanid, DLFH.loanid) AS Loanid,
+    COALESCE(DL.creationdate, DLFH.creationdate) AS Creationdate,
+    COALESCE(DL.scoreletter, DLFH.scoreletter) AS Scoreletter,
+    COALESCE(DL.currentstatusdetail, DLFH.currentstatusdetail) AS CurrenStatusDetails,
+    COALESCE(DL.monthlyincome, DLFH.monthlyincome) AS MonthlyIncome,
+    COALESCE(DL.scoreid, DLFH.scoreid) AS Scoreid
+      FROM `lendifydata1000.authorized_bi_views.DetailedLoans` AS DL
+      FULL JOIN `lendifydata1000.authorized_bi_views.DetailedLoansFullHistory` AS DLFH
+      ON DL.LoanId = DLFH.LoanId ) AS DL
+      
+  --mortgage 1 lastest
+LEFT JOIN CTE_UC AS UC
+  ON UC.Scoreid = DL.ScoreId
+  AND UC.Termid = 'W45A27'
+-- lastest blanco
+LEFT JOIN CTE_UC AS UC2
+  ON UC2.Scoreid = DL.ScoreId
+  AND UC2.termid = 'W45A25'
+--latest credit
+LEFT JOIN CTE_UC AS UC3
+  ON UC3.Scoreid = DL.ScoreId
+  AND UC3.Termid = 'W45A24'
+-- latest avbet
+LEFT JOIN CTE_UC AS UC4
+  ON UC4.Scoreid = DL.ScoreId
+  AND UC4.Termid = 'W45A23'
+--number of people on mortgage
+LEFT JOIN CTE_UC AS UC5
+  ON UC5.Scoreid = DL.ScoreId
+  AND UC5.Termid = 'W4D003'
+--latest mortgage 2
+LEFT JOIN CTE_UC AS UC6
+  ON UC6.Scoreid = DL.ScoreId
+  AND UC6.Termid = 'W45A28'
+--normal credit
+LEFT JOIN CTE_UC AS UC7
+  ON UC7.Scoreid = DL.ScoreId
+  AND UC7.Termid = 'W45024'
+--normal blanco
+LEFT JOIN CTE_UC AS UC8
+  ON UC8.Scoreid = DL.ScoreId
+  AND UC8.Termid = 'W45025'
+--normal mortgage 1 
+LEFT JOIN CTE_UC AS UC9
+  ON UC9.Scoreid = DL.ScoreId
+  AND UC9.Termid = 'W45027'
+--normal mortgage 2
+LEFT JOIN CTE_UC AS UC10
+  ON UC10.Scoreid = DL.ScoreId
+  AND UC10.Termid = 'W45028'
+-- normal avbet
+LEFT JOIN CTE_UC AS UC11
+  ON UC11.Scoreid = DL.ScoreId
+  AND UC11.Termid = 'W45023'
+  
